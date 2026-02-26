@@ -1,4 +1,18 @@
 # Build artifacts
 /build/
 
-# Any 
+# In case artifacts are outside the build directory
+*.o
+*.d
+*.su
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
+
+# Local config/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

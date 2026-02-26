@@ -21,7 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <math.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,6 +32,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define INV_TWO_PI 6.28318530718f
+#define INV_PHASE_SHIFT_120_RAD   2.09439510239f
+#define INV_PHASE_SHIFT_240_RAD   4.18879020479f
+#define INV_MODULATION_MAX 0.90f
+#define INV_MODULATION_RAMP_STEP 0.0005f
+#define INV_OUTPUT_FREQ_HZ 50.0f
 
 /* USER CODE END PD */
 
@@ -43,7 +50,8 @@
 TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
-
+static float g_phase_rad = 0.0f; // Current electrical angle in radians
+static float g_modulation_index = 0.0f; // PWM duty cycle (0.0 to 1.0), starts at 0 for ramp-up
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -51,12 +59,39 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void Inverter_StartPwmOutputs(void);
+static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint32_t Inverter_ClampCompare(float duty_cycle){ // clamps duty cycle to max and converts to timer compare value
+  const float clamped_mod = fminf(fmaxf(duty_cycle, 0.0f), 1.0f);
+  return (uint32_t)(clamped_mod * htim1.Init.Period);
+}
 
+static void Inverter_StartPwmOutputs(void){
+  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); }
+  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 1
+  
+  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) { Error_Handler(); }
+  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 2
+  
+  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); }
+  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 1
+}
+
+static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index){
+  const float m = fminf(fmaxf(modulation_index, 0.0f), INV_MODULATION_MAX); // Clamp modulation index to max
+  // Function for duty cycle: D = 0.5 + 0.5 * m * sin(wt) for each phase, where m is modu. index and wd is elec. angle
+  const float duty_a = 0.5f + 0.5f * m * sin(electrical_angle_rad);
+  const float duty_b = 0.5f + 0.5f * m * sin(electrical_angle_rad + INV_PHASE_SHIFT_120_RAD);
+  const float duty_c = 0.5f + 0.5f * m * sin(electrical_angle_rad + INV_PHASE_SHIFT_240_RAD);
+  
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, Inverter_ClampCompare(duty_a));
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, Inverter_ClampCompare(duty_b));
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, Inverter_ClampCompare(duty_c));
+}
 /* USER CODE END 0 */
 
 /**
@@ -90,7 +125,7 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-
+  Inverter_StartPwmOutputs(); // Start PWM outputs before entering main loop
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -100,6 +135,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    const float dtime_s = 0.001f; // delta time, 1ms update interval
+    g_phase_rad += INV_TWO_PI * INV_OUTPUT_FREQ_HZ * dtime_s; // Increment phase based on desired output frequency
+    if(g_phase_rad >= INV_TWO_PI) { g_phase_rad -= INV_TWO_PI; } // Wrap phase to [0, 2*pi]
+    if(g_modulation_index < INV_MODULATION_MAX) { // Ramp up modulation index to max
+      g_modulation_index += INV_MODULATION_RAMP_STEP; 
+      if(g_modulation_index > INV_MODULATION_MAX) { // Clamp to max
+        g_modulation_index = INV_MODULATION_MAX; 
+      } 
+    } 
+    
+    Inverter_UpdateSineDuty(g_phase_rad, g_modulation_index); // Update PWM duty cycle
+    HAL_Delay(1); // Delay 1ms
   }
   /* USER CODE END 3 */
 }
@@ -115,7 +162,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -123,7 +170,13 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -133,12 +186,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
