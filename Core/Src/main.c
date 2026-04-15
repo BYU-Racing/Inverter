@@ -35,9 +35,11 @@
 #define INV_TWO_PI 6.28318530718f
 #define INV_PHASE_SHIFT_120_RAD   2.09439510239f
 #define INV_PHASE_SHIFT_240_RAD   4.18879020479f
-#define INV_MODULATION_MAX 0.40f
+#define INV_MODULATION_MAX 0.7f // max duty cycle (max - min) of the square wave, max is 1.0, but don't go over 0.9
 #define INV_MODULATION_RAMP_STEP 0.0001f
 #define INV_OUTPUT_FREQ_HZ 2.0f 
+#define INV_MAX_DUTY_CYCLE 1.0f // Max duty cycle; if it is over 1.0, it causes overflow
+#define DELAY_MS 1 // Delay in ms for main loop update rate
 
 /* USER CODE END PD */
 
@@ -48,10 +50,12 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
+SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
 static float g_phase_rad = 0.0f; // Current electrical angle in radians
 static float g_modulation_index = 0.0f; // PWM duty cycle (0.0 to 1.0), starts at 0 for ramp-up
+static uint8_t spi_rx_buffer[4]; // 4 bytes, 32bits for a float
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,12 +65,20 @@ static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 static void Inverter_StartPwmOutputs(void);
 static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index);
+// void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi){
+//   if(hspi->Instance == SPI1) {
+//     memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy received bytes into g_phase_rad
+//     HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Restart SPI receive in interrupt mode
+//   }
+// }
+
 static uint32_t Inverter_ClampCompare(float duty_cycle){ // clamps duty cycle to max and converts to timer compare value
-  const float clamped_mod = fminf(fmaxf(duty_cycle, 0.0f), 1.0f);
+  const float clamped_mod = fminf(fmaxf(duty_cycle, 0.0f), INV_MAX_DUTY_CYCLE);
   return (uint32_t)(clamped_mod * htim1.Init.Period);
 }
 
@@ -124,8 +136,10 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM1_Init();
+  // MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   Inverter_StartPwmOutputs(); // Start PWM outputs before entering main loop
+  // HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Starts SPI receive for interrupts
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -135,9 +149,16 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // simulate phase angle
     const float dtime_s = 0.001f; // delta time, 1ms update interval
     g_phase_rad += INV_TWO_PI * INV_OUTPUT_FREQ_HZ * dtime_s; // Increment phase based on desired output frequency
     if(g_phase_rad >= INV_TWO_PI) { g_phase_rad -= INV_TWO_PI; } // Wrap phase to [0, 2*pi]
+
+    // // Blocking receive from SPI
+    // HAL_SPI_Receive(&hspi1, spi_rx_buffer, sizeof(float), HAL_MAX_DELAY); // Receive 4 bytes (32 bits) from SPI
+    // memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy received bytes into g_phase_rad
+
+    // ramp up modulation index to max for smooth startup
     if(g_modulation_index < INV_MODULATION_MAX) { // Ramp up modulation index to max
       g_modulation_index += INV_MODULATION_RAMP_STEP; 
       if(g_modulation_index > INV_MODULATION_MAX) { // Clamp to max
@@ -146,7 +167,7 @@ int main(void)
     } 
     
     Inverter_UpdateSineDuty(g_phase_rad, g_modulation_index); // Update PWM duty cycle
-    HAL_Delay(1); // Delay 1ms
+    HAL_Delay(DELAY_MS); // Delay 1ms
   }
   /* USER CODE END 3 */
 }
