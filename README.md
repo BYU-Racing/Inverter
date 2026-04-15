@@ -14,3 +14,6 @@ PWM 2N: PB14 - CH10 28\
 PWM 3N: PB15 - CH10 26
 
 GND: CN7 19, 20, 22; CN5 7
+
+### Usage
+To run it on the board, plug in PWM 1 and PWM 1N (CH10 pin 23 and 30, on the back) and any of the GND pins. I usually just flip the board and plug it in there.
