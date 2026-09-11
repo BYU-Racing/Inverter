@@ -2,7 +2,8 @@
 
 ### Commands to run the code
 Build the code: `make -j`\
-Download it to board: `STM32_Programmer_CLI -c port=SWD -w build\Inverter.elf -v -rst`
+Download it to board bare metal: `STM32_Programmer_CLI -c port=SWD -w build\Inverter.elf -v -rst`
+Or via USB: `STM32_Programmer_CLI -c port=USB1 -w build\Inverter.elf -v`
 
 ### PWM Pinout
 PWM 1: PA8 - D7 - CH10 23\
