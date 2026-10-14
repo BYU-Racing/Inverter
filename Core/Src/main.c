@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -32,15 +32,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// MARK: #defines
 #define INV_TWO_PI 6.28318530718f
-#define INV_PHASE_SHIFT_120_RAD   2.09439510239f
-#define INV_PHASE_SHIFT_240_RAD   4.18879020479f
-#define INV_MODULATION_MAX 0.7f // max duty cycle (max - min) of the square wave, max is 1.0, but don't go over 0.9
+#define INV_PHASE_SHIFT_120_RAD 2.09439510239f
+#define INV_PHASE_SHIFT_240_RAD 4.18879020479f
+#define INV_MODULATION_MAX                                                                         \
+    0.7f // max duty cycle (max - min) of the square wave, max is 1.0, but don't go over 0.9
 #define INV_MODULATION_RAMP_STEP 0.0001f
-#define INV_OUTPUT_FREQ_HZ 2.0f 
+#define INV_OUTPUT_FREQ_HZ 2.0f
 #define INV_MAX_DUTY_CYCLE 1.0f // Max duty cycle; if it is over 1.0, it causes overflow
-#define DELAY_MS 1 // Delay in ms for main loop update rate
-
+#define DELAY_MS 1              // Delay in ms for main loop update rate
+#define ADC_BUFFER_SIZE 1024U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,9 +61,11 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
-static float g_phase_rad = 0.0f; // Current electrical angle in radians
+// MARK: Private Var
+static float g_phase_rad = 0.0f;        // Current electrical angle in radians
 static float g_modulation_index = 0.0f; // PWM duty cycle (0.0 to 1.0), starts at 0 for ramp-up
-static uint8_t spi_rx_buffer[4]; // 4 bytes, 32bits for a float
+// static uint8_t spi_rx_buffer[4];        // 4 bytes, 32bits for a float
+static volatile uint16_t adc_buf[ADC_BUFFER_SIZE];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -80,39 +84,58 @@ static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// MARK: User Funcs
+
 // void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi){
 //   if(hspi->Instance == SPI1) {
 //     memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy received bytes into g_phase_rad
-//     HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Restart SPI receive in interrupt mode
+//     HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Restart SPI receive in interrupt
+//     mode
 //   }
 // }
 
-static uint32_t Inverter_ClampCompare(float duty_cycle){ // clamps duty cycle to max and converts to timer compare value
-  const float clamped_mod = fminf(fmaxf(duty_cycle, 0.0f), INV_MAX_DUTY_CYCLE);
-  return (uint32_t)(clamped_mod * htim1.Init.Period);
+static uint32_t Inverter_ClampCompare(
+    float duty_cycle
+) { // clamps duty cycle to max and converts to timer compare value
+    const float clamped_mod = fminf(fmaxf(duty_cycle, 0.0f), INV_MAX_DUTY_CYCLE);
+    return (uint32_t)(clamped_mod * htim1.Init.Period);
 }
 
-static void Inverter_StartPwmOutputs(void){
-  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); }
-  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 1
-  
-  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) { Error_Handler(); }
-  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 2
-  
-  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); }
-  if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); } // Start complementary output for channel 1
+static void Inverter_StartPwmOutputs(void) {
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1) != HAL_OK) {
+        Error_Handler();
+    } // Start complementary output for channel 1
+
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2) != HAL_OK) {
+        Error_Handler();
+    } // Start complementary output for channel 2
+
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) {
+        Error_Handler();
+    } // Start complementary output for channel 1
 }
 
-static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index){
-  const float m = fminf(fmaxf(modulation_index, 0.0f), INV_MODULATION_MAX); // Clamp modulation index to max
-  // Function for duty cycle: D = 0.5 + 0.5 * m * sin(wt) for each phase, where m is modu. index and wd is elec. angle
-  const float duty_a = 0.5f + 0.5f * m * sin(electrical_angle_rad);
-  const float duty_b = 0.5f + 0.5f * m * sin(electrical_angle_rad + INV_PHASE_SHIFT_120_RAD);
-  const float duty_c = 0.5f + 0.5f * m * sin(electrical_angle_rad + INV_PHASE_SHIFT_240_RAD);
-  
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, Inverter_ClampCompare(duty_a));
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, Inverter_ClampCompare(duty_b));
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, Inverter_ClampCompare(duty_c));
+static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index) {
+    const float m =
+        fminf(fmaxf(modulation_index, 0.0f), INV_MODULATION_MAX); // Clamp modulation index to max
+    // Function for duty cycle: D = 0.5 + 0.5 * m * sin(wt) for each phase, where m is modu. index
+    // and wd is elec. angle
+    const float duty_a = 0.5f + 0.5f * m * sinf(electrical_angle_rad);
+    const float duty_b = 0.5f + 0.5f * m * sinf(electrical_angle_rad + INV_PHASE_SHIFT_120_RAD);
+    const float duty_c = 0.5f + 0.5f * m * sinf(electrical_angle_rad + INV_PHASE_SHIFT_240_RAD);
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, Inverter_ClampCompare(duty_a));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, Inverter_ClampCompare(duty_b));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, Inverter_ClampCompare(duty_c));
 }
 /* USER CODE END 0 */
 
@@ -124,6 +147,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+    // MARK: Main
 
   /* USER CODE END 1 */
 
@@ -151,37 +175,49 @@ int main(void)
   MX_IWDG_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  Inverter_StartPwmOutputs(); // Start PWM outputs before entering main loop
-  // HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Starts SPI receive for interrupts
+    Inverter_StartPwmOutputs(); // Start PWM outputs before entering main loop
+
+    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, ADC_BUFFER_SIZE) != HAL_OK) {
+        Error_Handler();
+    }
+    // HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Starts SPI receive for
+    // interrupts
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+    while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // simulate phase angle
-    const float dtime_s = 0.001f; // delta time, 1ms update interval
-    g_phase_rad += INV_TWO_PI * INV_OUTPUT_FREQ_HZ * dtime_s; // Increment phase based on desired output frequency
-    if(g_phase_rad >= INV_TWO_PI) { g_phase_rad -= INV_TWO_PI; } // Wrap phase to [0, 2*pi]
+        // simulate phase angle
+        const float dtime_s = 0.001f; // delta time, 1ms update interval
+        g_phase_rad += INV_TWO_PI * INV_OUTPUT_FREQ_HZ *
+                       dtime_s; // Increment phase based on desired output frequency
+        if (g_phase_rad >= INV_TWO_PI) {
+            g_phase_rad -= INV_TWO_PI;
+        } // Wrap phase to [0, 2*pi]
 
-    // // Blocking receive from SPI
-    // HAL_SPI_Receive(&hspi1, spi_rx_buffer, sizeof(float), HAL_MAX_DELAY); // Receive 4 bytes (32 bits) from SPI
-    // memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy received bytes into g_phase_rad
+        // // Blocking receive from SPI
+        // HAL_SPI_Receive(&hspi1, spi_rx_buffer, sizeof(float), HAL_MAX_DELAY); // Receive 4
+        // bytes (32 bits) from SPI memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy
+        // received bytes into g_phase_rad
 
-    // ramp up modulation index to max for smooth startup
-    if(g_modulation_index < INV_MODULATION_MAX) { // Ramp up modulation index to max
-      g_modulation_index += INV_MODULATION_RAMP_STEP; 
-      if(g_modulation_index > INV_MODULATION_MAX) { // Clamp to max
-        g_modulation_index = INV_MODULATION_MAX; 
-      } 
-    } 
-    
-    Inverter_UpdateSineDuty(g_phase_rad, g_modulation_index); // Update PWM duty cycle
-    HAL_Delay(DELAY_MS); // Delay 1ms
-  }
+        // ramp up modulation index to max for smooth startup
+        if (g_modulation_index < INV_MODULATION_MAX) { // Ramp up modulation index to max
+            g_modulation_index += INV_MODULATION_RAMP_STEP;
+            if (g_modulation_index > INV_MODULATION_MAX) { // Clamp to max
+                g_modulation_index = INV_MODULATION_MAX;
+            }
+        }
+
+        Inverter_UpdateSineDuty(g_phase_rad, g_modulation_index); // Update PWM duty cycle
+        HAL_IWDG_Refresh(&hiwdg);
+        HAL_Delay(DELAY_MS); // Delay 1ms
+    }
   /* USER CODE END 3 */
 }
 
@@ -196,7 +232,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -208,10 +244,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
-  RCC_OscInitStruct.PLL.PLLN = 85;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 64;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV4;
-  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -226,11 +262,11 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
-  HAL_RCC_MCOConfig(RCC_MCO_PG10, RCC_MCO1SOURCE_SYSCLK, RCC_MCODIV_1);
+  HAL_RCC_MCOConfig(RCC_MCO_PG10, RCC_MCO1SOURCE_SYSCLK, RCC_MCODIV_16);
 }
 
 /**
@@ -255,7 +291,7 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV256;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.GainCompensation = 0;
@@ -496,7 +532,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF0_MCO;
   HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
@@ -506,7 +542,19 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+// MARK: ADC CBs
 
+// Gets called when the buf is half full
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
+    if (hadc->Instance == ADC1) {
+    }
+}
+
+// Gets called when the buf is full
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+    if (hadc->Instance == ADC1) {
+    }
+}
 /* USER CODE END 4 */
 
 /**
@@ -516,11 +564,10 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+    /* User can add his own implementation to report the HAL error return state */
+    __disable_irq();
+    while (1) {
+    }
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -534,8 +581,8 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+    /* User can add his own implementation to report the file name and line number,
+       ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
