@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 /* USER CODE END Includes */
 
@@ -42,7 +43,7 @@
 #define INV_OUTPUT_FREQ_HZ 2.0f
 #define INV_MAX_DUTY_CYCLE 1.0f // Max duty cycle; if it is over 1.0, it causes overflow
 #define DELAY_MS 1              // Delay in ms for main loop update rate
-#define ADC_BUFFER_SIZE 1024U
+#define ADC_BUFFER_SIZE 32U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,6 +57,8 @@ DMA_HandleTypeDef hdma_adc1;
 
 IWDG_HandleTypeDef hiwdg;
 
+UART_HandleTypeDef hlpuart1;
+
 SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
@@ -66,6 +69,7 @@ static float g_phase_rad = 0.0f;        // Current electrical angle in radians
 static float g_modulation_index = 0.0f; // PWM duty cycle (0.0 to 1.0), starts at 0 for ramp-up
 // static uint8_t spi_rx_buffer[4];        // 4 bytes, 32bits for a float
 static volatile uint16_t adc_buf[ADC_BUFFER_SIZE];
+static volatile uint16_t adc_latest = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -76,6 +80,7 @@ static void MX_TIM1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_IWDG_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_LPUART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void Inverter_StartPwmOutputs(void);
 static void Inverter_UpdateSineDuty(float electrical_angle_rad, float modulation_index);
@@ -174,6 +179,7 @@ int main(void)
   MX_SPI1_Init();
   MX_IWDG_Init();
   MX_ADC1_Init();
+  MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
     Inverter_StartPwmOutputs(); // Start PWM outputs before entering main loop
 
@@ -185,10 +191,12 @@ int main(void)
     }
     // HAL_SPI_Receive_IT(&hspi1, spi_rx_buffer, sizeof(float)); // Starts SPI receive for
     // interrupts
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+    // MARK: While Loop
     while (1) {
     /* USER CODE END WHILE */
 
@@ -205,6 +213,19 @@ int main(void)
         // HAL_SPI_Receive(&hspi1, spi_rx_buffer, sizeof(float), HAL_MAX_DELAY); // Receive 4
         // bytes (32 bits) from SPI memcpy(&g_phase_rad, spi_rx_buffer, sizeof(float)); // Copy
         // received bytes into g_phase_rad
+        static uint32_t last_time = 0;
+        uint32_t now = HAL_GetTick();
+
+        if ((now - last_time) >= 100u) {
+            last_time = now;
+
+            char message[32];
+            unsigned sample = adc_latest;
+            int length = snprintf(message, sizeof(message), "ADC: %u\r\n", sample);
+            if (length > 0 && length < (int)sizeof(message)) {
+                HAL_UART_Transmit(&hlpuart1, (uint8_t *)message, (uint16_t)length, 10);
+            }
+        }
 
         // ramp up modulation index to max for smooth startup
         if (g_modulation_index < INV_MODULATION_MAX) { // Ramp up modulation index to max
@@ -266,7 +287,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  HAL_RCC_MCOConfig(RCC_MCO_PG10, RCC_MCO1SOURCE_SYSCLK, RCC_MCODIV_16);
+  HAL_RCC_MCOConfig(RCC_MCO_PG10, RCC_MCO1SOURCE_LSI, RCC_MCODIV_1);
 }
 
 /**
@@ -363,6 +384,53 @@ static void MX_IWDG_Init(void)
   /* USER CODE BEGIN IWDG_Init 2 */
 
   /* USER CODE END IWDG_Init 2 */
+
+}
+
+/**
+  * @brief LPUART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_LPUART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN LPUART1_Init 0 */
+
+  /* USER CODE END LPUART1_Init 0 */
+
+  /* USER CODE BEGIN LPUART1_Init 1 */
+
+  /* USER CODE END LPUART1_Init 1 */
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 115200;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&hlpuart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&hlpuart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&hlpuart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN LPUART1_Init 2 */
+
+  /* USER CODE END LPUART1_Init 2 */
 
 }
 
@@ -547,12 +615,14 @@ static void MX_GPIO_Init(void)
 // Gets called when the buf is half full
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
     if (hadc->Instance == ADC1) {
+        adc_latest = adc_buf[ADC_BUFFER_SIZE / 2 - 1];
     }
 }
 
 // Gets called when the buf is full
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
     if (hadc->Instance == ADC1) {
+        adc_latest = adc_buf[ADC_BUFFER_SIZE - 1];
     }
 }
 /* USER CODE END 4 */

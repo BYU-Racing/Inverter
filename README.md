@@ -6,7 +6,7 @@ Download it to board bare metal: `STM32_Programmer_CLI -c port=SWD -w build\Inve
 Or via USB: `STM32_Programmer_CLI -c port=USB1 -w build\Inverter.elf -v`
 
 ### PWM Pinout
-PWM 1: PA8 - D7 - CH10 23\
+PWM 1: PA8 - D7 - CH10 23, CH9 8\
 PWM 2: PA9 - D8 - CH10 21\
 PWM 3: PA10 - D2 - CH10 33
 
